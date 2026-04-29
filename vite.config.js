@@ -16,7 +16,7 @@ export default defineConfig({
   },
   build: {
     sourcemap: false, // Fundamental: impede que vejam o código original
-    minify: 'terser',
+    minify: 'esbuild',
     target: 'esnext',
     terserOptions: {
       compress: {
