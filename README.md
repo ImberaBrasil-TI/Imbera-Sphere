@@ -1,5 +1,9 @@
-# Vue 3 + Vite
+# Imbera Sphere
 
-This template should help get you started developing with Vue 3 in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Plataforma de unificação de ferramentas de suporte de TI.
 
-Learn more about IDE Support for Vue in the [Vue Docs Scaling up Guide](https://vuejs.org/guide/scaling-up/tooling.html#ide-support).
+## Funcionalidades
+- [ ] Integração com o Planner do Teams (Futuro)
+- [ ] Geração de Etiquetas
+- [ ] Monitoramento de Gastos por Tokens de IA
+- [ ] Monitoramento de Tokens de Claude e OpenAI
