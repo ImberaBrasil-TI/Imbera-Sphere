@@ -7,3 +7,8 @@ Plataforma de unificação de ferramentas de suporte de TI.
 - [X] Geração de Etiquetas
 - [X] Monitoramento de Gastos por Tokens de IA
 - [X] Monitoramento de Tokens de Claude e OpenAI
+
+## Requisitos
+- Node.js 14 ou superior
+- npm ou yarn
+- Supabase CLI
