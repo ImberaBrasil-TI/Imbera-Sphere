@@ -2,85 +2,183 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, anthropic-version, anthropic-beta, openai-beta, openai-organization, openai-project',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
 }
 
-serve(async (req) => {
-  // Preflight response para requisições do navegador
+serve(async (req: Request) => {
+  // CORS Preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    const body = await req.json()
-    const { provider, endpoint, method = 'POST', payload } = body
+    const url = new URL(req.url)
+    // Em Supabase, o pathname começa com o nome da função
+    let path = url.pathname.replace(/^\/ai-proxy/, '')
+    if (!path.startsWith('/')) path = '/' + path
 
-    let url = ''
-    const headers = new Headers()
-    headers.set('Content-Type', 'application/json')
+    let provider: 'openai' | 'anthropic' | '' = ''
+    let endpoint = ''
+    let method = req.method
+    let body: any = null
+    let isLegacy = false
 
-    // Detectar se é uma chamada de relatórios/custos (geralmente exige Admin Key)
-    const isAdminRoute = endpoint.includes('organization') || endpoint.includes('organizations')
+    const parts = path.split('/').filter(Boolean)
+
+    // 1. Detecção de Roteamento
+    if (parts[0] === 'openai' || parts[0] === 'v1') {
+      provider = 'openai'
+      // Se começou com v1, mantemos o v1 no endpoint, se começou com openai, removemos o prefixo
+      endpoint = parts[0] === 'v1' ? path : '/' + parts.slice(1).join('/')
+    } else if (parts[0] === 'anthropic') {
+      provider = 'anthropic'
+      endpoint = '/' + parts.slice(1).join('/')
+    } else if (path === '/' || path === '') {
+      // Tentar detecção Legada (provider/endpoint no corpo)
+      const contentType = req.headers.get('content-type') || ''
+      if (contentType.includes('application/json') && (method === 'POST' || method === 'PUT')) {
+        try {
+          const clonedReq = req.clone()
+          const json = await clonedReq.json()
+          if (json.provider && json.endpoint) {
+            provider = json.provider
+            endpoint = json.endpoint
+            method = json.method || method
+            body = json.payload ? JSON.stringify(json.payload) : null
+            isLegacy = true
+          }
+        } catch (_e) {
+          // Não é um JSON legado válido
+        }
+      }
+    }
+
+    if (!provider) {
+      // Se não identificou provedor e é a raiz, retorna info
+      if (path === '/' || path === '') {
+        return new Response(JSON.stringify({
+          status: 'online',
+          message: 'AI Proxy is active',
+          usage: {
+            path_based: '/ai-proxy/openai/v1/... ou /ai-proxy/anthropic/v1/...',
+            legacy: 'POST /ai-proxy com {provider, endpoint, payload}'
+          }
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`Não foi possível identificar o provedor para o caminho: ${path}`)
+    }
+
+    // 2. Preparação da Requisição para o Provedor
+    const targetHeaders = new Headers()
+    
+    // Adicionar query params se existirem
+    if (url.search && !endpoint.includes('?')) {
+      endpoint += url.search
+    }
+
+    // Identificar se é uma rota administrativa/uso/custos
+    const isAdminRoute = 
+      endpoint.includes('/organization') || 
+      endpoint.includes('/organizations') || 
+      endpoint.includes('/usage') || 
+      endpoint.includes('/costs') ||
+      endpoint.includes('/admin/')
 
     if (provider === 'openai') {
-      url = `https://api.openai.com/v1${endpoint}`
-      // Para chamadas administrativas, tentar usar a OPENAI_ADMIN_KEY (se configurada), senão usar a normal
-      const apiKey = isAdminRoute ? (Deno.env.get('OPENAI_ADMIN_KEY') || Deno.env.get('OPENAI_API_KEY')) : Deno.env.get('OPENAI_API_KEY')
-      headers.set('Authorization', `Bearer ${apiKey}`)
-    } else if (provider === 'anthropic') {
-      url = `https://api.anthropic.com/v1${endpoint}`
-      // Anthropic exige Admin Key para relatórios de organização
-      const apiKey = isAdminRoute ? (Deno.env.get('ANTHROPIC_ADMIN_KEY') || Deno.env.get('ANTHROPIC_API_KEY')) : Deno.env.get('ANTHROPIC_API_KEY')
-      headers.set('x-api-key', apiKey!)
-      headers.set('anthropic-version', '2023-06-01')
-    } else {
-      throw new Error('Provedor inválido. Especifique openai ou anthropic.')
-    }
-
-    const fetchOptions: RequestInit = {
-      method,
-      headers,
-    }
-
-    // Se houver body (payload) e não for um GET/HEAD, enviamos o body
-    if (method !== 'GET' && method !== 'HEAD' && payload) {
-      fetchOptions.body = JSON.stringify(payload)
-    }
-
-    const res = await fetch(url, fetchOptions)
-    
-    // Suporte a STREAMING (SSE - Server-Sent Events)
-    const contentType = res.headers.get('content-type') || ''
-    if (contentType.includes('text/event-stream')) {
-      // Repassa o body diretamente (fluxo contínuo) para o frontend Vue
-      return new Response(res.body, {
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
-        status: res.status,
+      const apiKey = isAdminRoute 
+        ? (Deno.env.get('OPENAI_ADMIN_KEY') || Deno.env.get('OPENAI_API_KEY'))
+        : Deno.env.get('OPENAI_API_KEY')
+      
+      if (!apiKey) throw new Error('OPENAI_API_KEY não configurada no ambiente')
+      
+      targetHeaders.set('Authorization', `Bearer ${apiKey}`)
+      
+      // Encaminhar headers específicos da OpenAI
+      ['openai-beta', 'openai-organization', 'openai-project'].forEach(h => {
+        if (req.headers.has(h)) targetHeaders.set(h, req.headers.get(h)!)
       })
+      
+      const targetUrl = `https://api.openai.com${endpoint.startsWith('/v1') ? endpoint : '/v1' + endpoint}`
+
+      if (!isLegacy && method !== 'GET' && method !== 'HEAD') {
+        body = req.body
+      }
+      
+      // Repassar Content-Type se não for multipart
+      const reqContentType = req.headers.get('content-type')
+      if (reqContentType && !reqContentType.includes('multipart/form-data')) {
+        targetHeaders.set('Content-Type', reqContentType)
+      }
+
+      const response = await fetch(targetUrl, { method, headers: targetHeaders, body })
+      return handleResponse(response)
+
+    } else if (provider === 'anthropic') {
+      const apiKey = isAdminRoute 
+        ? (Deno.env.get('ANTHROPIC_ADMIN_KEY') || Deno.env.get('ANTHROPIC_API_KEY'))
+        : Deno.env.get('ANTHROPIC_API_KEY')
+      
+      if (!apiKey) throw new Error('ANTHROPIC_API_KEY não configurada no ambiente')
+
+      targetHeaders.set('x-api-key', apiKey)
+      targetHeaders.set('anthropic-version', req.headers.get('anthropic-version') || '2023-06-01')
+      
+      if (req.headers.has('anthropic-beta')) {
+        targetHeaders.set('anthropic-beta', req.headers.get('anthropic-beta')!)
+      }
+
+      const targetUrl = `https://api.anthropic.com${endpoint.startsWith('/v1') ? endpoint : '/v1' + endpoint}`
+
+      if (!isLegacy && method !== 'GET' && method !== 'HEAD') {
+        body = req.body
+      }
+      
+      targetHeaders.set('Content-Type', req.headers.get('content-type') || 'application/json')
+
+      const response = await fetch(targetUrl, { method, headers: targetHeaders, body })
+      return handleResponse(response)
     }
 
-    // Tratamento para requisições normais sem streaming
-    const resText = await res.text()
-    let data
-    try {
-      data = JSON.parse(resText)
-    } catch(e) {
-      data = { text: resText } // Devolve como texto caso dê erro no parse
-    }
+    throw new Error(`Provedor ${provider} não suportado`)
 
-    return new Response(JSON.stringify(data), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: res.status,
-    })
   } catch (error: any) {
-    return new Response(JSON.stringify({ error: error.message }), {
+    console.error(`[AI Proxy Error] ${error.message}`)
+    return new Response(JSON.stringify({
+      error: {
+        message: error.message,
+        type: 'proxy_error'
+      }
+    }), {
+      status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
     })
   }
 })
+
+async function handleResponse(res: Response) {
+  const responseHeaders = new Headers(corsHeaders)
+  
+  // Encaminhar headers relevantes da resposta
+  const forwardHeaders = ['content-type', 'cache-control', 'openai-beta', 'anthropic-version', 'x-request-id']
+  forwardHeaders.forEach(h => {
+    if (res.headers.has(h)) responseHeaders.set(h, res.headers.get(h)!)
+  })
+
+  // Suporte a Streaming (SSE)
+  if (res.headers.get('content-type')?.includes('text/event-stream')) {
+    return new Response(res.body, {
+      status: res.status,
+      headers: responseHeaders,
+    })
+  }
+
+  // Respostas Normais
+  const data = await res.arrayBuffer()
+  return new Response(data, {
+    status: res.status,
+    headers: responseHeaders,
+  })
+}
