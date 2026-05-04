@@ -46,6 +46,7 @@ const groups = [
     icon: WrenchScrewdriverIcon,
     items: [
       { name: 'Etiquetas', href: '/etiquetas', icon: TagIcon },
+      { name: 'Fechamento', href: '/fechamento', icon: WrenchScrewdriverIcon },
     ]
   },
   {
