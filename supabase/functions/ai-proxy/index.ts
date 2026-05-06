@@ -2,7 +2,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, anthropic-version, anthropic-beta, openai-beta, openai-organization, openai-project',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, anthropic-version, anthropic-beta',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
 }
 
@@ -96,11 +96,6 @@ serve(async (req: Request) => {
       
       targetHeaders.set('Authorization', `Bearer ${apiKey}`)
       
-      // Encaminhar headers específicos da OpenAI
-      ['openai-beta', 'openai-organization', 'openai-project'].forEach(h => {
-        if (req.headers.has(h)) targetHeaders.set(h, req.headers.get(h)!)
-      })
-      
       const targetUrl = `https://api.openai.com${endpoint.startsWith('/v1') ? endpoint : '/v1' + endpoint}`
 
       if (!isLegacy && method !== 'GET' && method !== 'HEAD') {
@@ -126,8 +121,9 @@ serve(async (req: Request) => {
       targetHeaders.set('x-api-key', apiKey)
       targetHeaders.set('anthropic-version', req.headers.get('anthropic-version') || '2023-06-01')
       
-      if (req.headers.has('anthropic-beta')) {
-        targetHeaders.set('anthropic-beta', req.headers.get('anthropic-beta')!)
+      const anthropicBeta = req.headers.get('anthropic-beta')
+      if (anthropicBeta) {
+        targetHeaders.set('anthropic-beta', anthropicBeta)
       }
 
       const targetUrl = `https://api.anthropic.com${endpoint.startsWith('/v1') ? endpoint : '/v1' + endpoint}`
@@ -164,7 +160,8 @@ async function handleResponse(res: Response) {
   // Encaminhar headers relevantes da resposta
   const forwardHeaders = ['content-type', 'cache-control', 'openai-beta', 'anthropic-version', 'x-request-id']
   forwardHeaders.forEach(h => {
-    if (res.headers.has(h)) responseHeaders.set(h, res.headers.get(h)!)
+    const value = res.headers.get(h)
+    if (value) responseHeaders.set(h, value)
   })
 
   // Suporte a Streaming (SSE)

@@ -166,7 +166,7 @@ function resetForm() {
 <template>
   <div class="p-8 max-w-7xl mx-auto">
     <PageHeader 
-      title="🛠️ Fechamento Inteligente" 
+      title="Fechamento de Chamados" 
       subtitle="Encerramento de chamados Aranda com integração WhatsApp e Supabase."
     />
 
